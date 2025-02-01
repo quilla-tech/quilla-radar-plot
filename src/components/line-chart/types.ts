@@ -1,7 +1,5 @@
 export interface DataPoint {
   date: string;
-  sales: number;
-  goal: number;
   spotify_listeners?: number;
   spotify_followers?: number;
   spotify_popularity?: number;
