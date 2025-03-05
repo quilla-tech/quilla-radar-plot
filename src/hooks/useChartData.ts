@@ -4,39 +4,36 @@ import { useQuery } from "@tanstack/react-query";
  * Complete list of chart metrics in artist_data.json.
  */
 interface ArtistDataResponse {
-  charts: {
-    spotify__followers: { date: string; value: number }[];
-    spotify__listeners: { date: string; value: number }[];
-    spotify__popularity: { date: string; value: number }[];
-    facebook__likes: { date: string; value: number }[];
-    facebook__talks: { date: string; value: number }[];
-    instagram__followers: { date: string; value: number }[];
-    youtube_channel__subscribers: { date: string; value: number }[];
-    youtube_channel__views: { date: string; value: number }[];
-    tiktok__followers: { date: string; value: number }[];
-    tiktok__likes: { date: string; value: number }[];
-  };
-  annotations: {
-    date: string;
-    description: string;
-    type: string;
-  }[];
-  project_id: string;
+  comparison_results: {
+    sp_followers: MetricData;
+    tiktok_likes: MetricData;
+    ins_followers: MetricData;
+    sp_popularity: MetricData;
+    tiktok_followers: MetricData;
+    facebook_followers: MetricData;
+    tiktok_track_posts: MetricData;
+    sp_monthly_listeners: MetricData;
+  },
+  partial_percentage: number;
+}
+
+interface MetricData {
+  max_value: number;
+  min_value: number;
+  artist_raw_value: number;
+  artist_normalized_score: number;
+  related_artists_average: number;
+  related_artists_normalized_average: number;
 }
 
 interface DataPoint {
-  date: string;
-  // Existing and newly added fields from artist_data.json
-  spotify_listeners?: number;
-  spotify_followers?: number;
-  spotify_popularity?: number;
-  facebook_likes?: number;
-  facebook_talks?: number;
-  instagram_followers?: number;
-  youtube_channel_subscribers?: number;
-  youtube_channel_views?: number;
-  tiktok_followers?: number;
-  tiktok_likes?: number;
+  metric: string;
+  raw_value: number;
+  normalized_score: number;
+  max_value: number;
+  min_value: number;
+  related_artists_average: number;
+  related_artists_normalized_average: number;
 }
 
 /**
@@ -46,83 +43,87 @@ interface DataPoint {
  */
 interface ChartDataResult {
   data: DataPoint[];
-  annotations: {
-    date: string;
-    description: string;
-    type: string;
-  }[];
 }
 
 async function fetchArtistData(): Promise<ArtistDataResponse> {
-  const response = await fetch("/artist_data.json");
-  if (!response.ok) throw new Error("Failed to fetch artist data");
-  return (await response.json()) as ArtistDataResponse;
+
+    // Extract projectId and accessToken from URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectId = urlParams.get('projectId') || "JKI6MbzT1D3s1nN1pbXt"
+    const accessToken = urlParams.get('accessToken') || "TOKEN";
+    const apiUrl = urlParams.get('apiURL') || 'http://localhost:5000/quilla-staging/us-central1';
+    
+    if (!projectId || !accessToken) {
+      throw new Error("Missing required URL parameters: projectId or accessToken");
+    }
+    
+    const response = await fetch(`${apiUrl}/api/projects/benchmark/radar?projectId=${projectId}`, {
+      cache: 'no-store',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+    if (!response.ok) throw new Error("Failed to fetch artist data");
+    return (await response.json()) as ArtistDataResponse;
+
+
+  // const response = await fetch("https://api.npoint.io/023b6b99f04309807a1a");
+  // if (!response.ok) throw new Error("Failed to fetch artist data");
+  // return (await response.json()) as ArtistDataResponse;
+}
+
+// Add a new function to handle polling until complete data is available
+async function fetchCompleteArtistData(): Promise<ArtistDataResponse> {
+  const pollData = async (retryCount = 0, maxRetries = 12): Promise<ArtistDataResponse> => {
+    const data = await fetchArtistData();
+    
+    // If data is complete or we've reached max retries, return the data
+    if (data.partial_percentage >= 100 || retryCount >= maxRetries) {
+      return data;
+    }
+    
+    // Wait 5 seconds before trying again
+    console.log(`Data is partial (${data.partial_percentage}%). Retrying in 5 seconds...`);
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Recursive call with incremented retry count
+    return pollData(retryCount + 1, maxRetries);
+  };
+  
+  return pollData();
 }
 
 export function useChartData() {
   return useQuery<ChartDataResult>({
     queryKey: ["chartData"],
     queryFn: async () => {
-      const artistData = await fetchArtistData();
+      const artistData = await fetchCompleteArtistData();
 
-      // We'll gather all possible dates from each chart array
-      const allDatesSet = new Set<string>();
+      console.log("Artist data: ");
+      console.log(artistData.comparison_results);
 
-      // From each chart in artist data
-      Object.values(artistData.charts).forEach((metricArray) => {
-        metricArray.forEach((pt) => allDatesSet.add(pt.date));
-      });
+      // Transform the data into an array of DataPoints
+      try {
+        const finalData: DataPoint[] = Object.entries(artistData.comparison_results)
+          .filter(([_, values]) => values !== null)
+          .map(([metric, values]) => ({
+            metric,
+            raw_value: values.artist_raw_value,
+            normalized_score: values.artist_normalized_score,
+            max_value: values.max_value,
+            min_value: values.min_value,
+            related_artists_average: values.related_artists_average,
+            related_artists_normalized_average: values.related_artists_normalized_average
+          }));
 
-      // Convert Set to sorted array of dates
-      const allDates = Array.from(allDatesSet).sort(
-        (a, b) => new Date(a).getTime() - new Date(b).getTime()
-      );
-
-      // Create dictionaries for quick lookup from each metric
-      function arrayToMap(
-        arr: { date: string; value: number }[]
-      ): Record<string, number> {
-        const map: Record<string, number> = {};
-        arr.forEach((d) => {
-          map[d.date] = d.value;
-        });
-        return map;
+        return {
+          data: finalData
+        };
+      } catch (error) {
+        console.error("Error transforming artist data: ", error);
+        throw new Error("Error transforming artist data: " + error);
       }
 
-      const spotifyListenersMap = arrayToMap(artistData.charts.spotify__listeners);
-      const spotifyFollowersMap = arrayToMap(artistData.charts.spotify__followers);
-      const spotifyPopularityMap = arrayToMap(artistData.charts.spotify__popularity);
-      const facebookLikesMap = arrayToMap(artistData.charts.facebook__likes);
-      const facebookTalksMap = arrayToMap(artistData.charts.facebook__talks);
-      const instagramFollowersMap = arrayToMap(artistData.charts.instagram__followers);
-      const youtubeSubscribersMap = arrayToMap(
-        artistData.charts.youtube_channel__subscribers
-      );
-      const youtubeViewsMap = arrayToMap(
-        artistData.charts.youtube_channel__views
-      );
-      const tiktokFollowersMap = arrayToMap(artistData.charts.tiktok__followers);
-      const tiktokLikesMap = arrayToMap(artistData.charts.tiktok__likes);
-
-      // Combine them into one array of DataPoint
-      const finalData: DataPoint[] = allDates.map((date) => ({
-        date,
-        spotify_listeners: spotifyListenersMap[date] || 0,
-        spotify_followers: spotifyFollowersMap[date] || 0,
-        spotify_popularity: spotifyPopularityMap[date] || 0,
-        facebook_likes: facebookLikesMap[date] || 0,
-        facebook_talks: facebookTalksMap[date] || 0,
-        instagram_followers: instagramFollowersMap[date] || 0,
-        youtube_channel_subscribers: youtubeSubscribersMap[date] || 0,
-        youtube_channel_views: youtubeViewsMap[date] || 0,
-        tiktok_followers: tiktokFollowersMap[date] || 0,
-        tiktok_likes: tiktokLikesMap[date] || 0,
-      }));
-
-      return {
-        data: finalData,
-        annotations: artistData.annotations || [],
-      };
     },
   });
 }
