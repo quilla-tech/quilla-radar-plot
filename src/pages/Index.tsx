@@ -1,9 +1,27 @@
 import { useChartData } from "../hooks/useChartData";
 import RadarChart from "../components/RadarChart";
 import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 const Index = () => {
   const { data, isLoading, error } = useChartData();
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    // If data is loaded but partial_percentage is less than 100, refresh after 5 seconds
+    if (data && data.partial_percentage && data.partial_percentage < 100) {
+      setRefreshing(true);
+      const timer = setTimeout(() => {
+        console.log("Refreshing data due to partial percentage:", data.partial_percentage);
+        queryClient.invalidateQueries({ queryKey: ["chartData"] });
+        setRefreshing(false);
+      }, 5000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [data, queryClient]);
 
   if (error) {
     return (

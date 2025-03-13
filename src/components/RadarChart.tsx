@@ -1,6 +1,6 @@
 import * as d3 from "d3";
 import { useEffect, useRef } from "react";
-import { METRIC_LABELS } from "@/constants/metricLabels";
+import { METRIC_LABELS, METRIC_CATEGORIES } from "@/constants/metricLabels";
 
 interface RadarChartProps {
   data: Array<{
@@ -17,6 +17,35 @@ const RadarChart = ({ data }: RadarChartProps) => {
 
   useEffect(() => {
     if (!data.length || !svgRef.current || !containerRef.current) return;
+
+    // Create a predefined order based on METRIC_CATEGORIES
+    const orderedMetrics = [
+      ...METRIC_CATEGORIES.spotify,
+      ...METRIC_CATEGORIES.tiktok,
+      ...METRIC_CATEGORIES.instagram,
+      ...METRIC_CATEGORIES.facebook
+    ];
+
+    // Sort data according to the predefined order
+    const sortedData = [...data].sort((a, b) => {
+      const indexA = orderedMetrics.indexOf(a.metric as any);
+      const indexB = orderedMetrics.indexOf(b.metric as any);
+      
+      // If both metrics are in our ordered list, sort by their position
+      if (indexA !== -1 && indexB !== -1) {
+        return indexA - indexB;
+      }
+      
+      // If only one is in the list, prioritize it
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      
+      // If neither is in the list, fall back to alphabetical
+      return a.metric.localeCompare(b.metric);
+    });
+
+    // Log the sorted metrics to verify order
+    console.log("Sorted metrics:", sortedData.map(d => d.metric));
 
     // Clear previous chart
     d3.select(svgRef.current).selectAll("*").remove();
@@ -36,7 +65,7 @@ const RadarChart = ({ data }: RadarChartProps) => {
       .attr("transform", `translate(${width / 2},${height / 2})`);
 
     // Create scales
-    const numPoints = data.length;
+    const numPoints = sortedData.length;
     const angleScale = d3
       .scaleLinear()
       .domain([0, numPoints])
@@ -49,7 +78,7 @@ const RadarChart = ({ data }: RadarChartProps) => {
 
     // Draw axis lines
     svg.selectAll(".axis-line")
-      .data(data)
+      .data(sortedData)
       .join("line")
       .attr("x1", 0)
       .attr("y1", 0)
@@ -72,37 +101,48 @@ const RadarChart = ({ data }: RadarChartProps) => {
       .attr("stroke-width", 1)
       .attr("stroke-dasharray", "4,4");
 
-    // Create path generators
-    const mainAreaGenerator = d3.lineRadial<(typeof data)[0]>()
-      .angle((d, i) => angleScale(i) - Math.PI / 2)
-      .radius(d => radiusScale(d.normalized_score))
-      .curve(d3.curveCatmullRomClosed);
+    // Draw related artists area using a polygon that goes exactly through each point
+    // Create points for the related artists polygon
+    const relatedPolygonPoints = sortedData.map((d, i) => {
+      const angle = angleScale(i) - Math.PI / 2;
+      const r = radiusScale(d.related_artists_normalized_average);
+      return [r * Math.cos(angle), r * Math.sin(angle)];
+    });
 
-    const relatedAreaGenerator = d3.lineRadial<(typeof data)[0]>()
-      .angle((d, i) => angleScale(i) - Math.PI / 2)
-      .radius(d => radiusScale(d.related_artists_normalized_average))
-      .curve(d3.curveCatmullRomClosed);
+    // Create a polygon path generator with smoothing
+    const polygonGenerator = d3.line()
+      .x(d => d[0])
+      .y(d => d[1])
+      .curve(d3.curveCardinalClosed.tension(0.5)); // Use cardinal curve with tension for smoothing
 
-    // Draw related artists area first (so it's behind)
+    // Draw the related artists polygon
     svg.append("path")
-      .datum(data)
-      .attr("d", relatedAreaGenerator)
+      .datum(relatedPolygonPoints)
+      .attr("d", polygonGenerator)
       .attr("fill", "rgba(131, 117, 105, 0.1)")
       .attr("stroke", "rgba(131, 117, 105, 0.8)")
       .attr("stroke-width", 1.5)
       .attr("stroke-dasharray", "4,4");
 
-    // Draw main artist area (on top)
+    // Draw main artist area using a polygon that goes exactly through each point
+    // Create points for the main artist polygon
+    const mainPolygonPoints = sortedData.map((d, i) => {
+      const angle = angleScale(i) - Math.PI / 2;
+      const r = radiusScale(d.normalized_score);
+      return [r * Math.cos(angle), r * Math.sin(angle)];
+    });
+
+    // Draw the main artist polygon
     svg.append("path")
-      .datum(data)
-      .attr("d", mainAreaGenerator)
+      .datum(mainPolygonPoints)
+      .attr("d", polygonGenerator)
       .attr("fill", "rgba(255, 189, 0, 0.3)")
       .attr("stroke", "rgba(255, 189, 0, 0.8)")
       .attr("stroke-width", 1.5);
 
-    // Add labels
+    // Add labels with debug info
     svg.selectAll(".label")
-      .data(data)
+      .data(sortedData)
       .join("text")
       .attr("x", (d, i) => (radius + 20) * Math.cos(angleScale(i) - Math.PI / 2))
       .attr("y", (d, i) => (radius + 20) * Math.sin(angleScale(i) - Math.PI / 2))
